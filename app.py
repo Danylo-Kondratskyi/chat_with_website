@@ -1,5 +1,3 @@
-
-
 import streamlit as st
 from langchain_core.messages import AIMessage, HumanMessage
 from langchain_community.document_loaders import WebBaseLoader
@@ -10,8 +8,17 @@ from dotenv import load_dotenv
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain.chains import create_history_aware_retriever, create_retrieval_chain
 from langchain.chains.combine_documents import create_stuff_documents_chain
+import time
+from collections import deque
 
 load_dotenv()
+
+
+RATE_LIMIT = 100  # requests per minute
+TIME_WINDOW = 60  # seconds
+
+
+request_times = deque()
 
 
 def get_vectorstore_from_url(url):
@@ -27,6 +34,16 @@ def get_vectorstore_from_url(url):
     vector_store = Chroma.from_documents(document_chunks, OpenAIEmbeddings())
 
     return vector_store
+
+
+def check_rate_limit():
+    current_time = time.time()
+    while request_times and current_time - request_times[0] > TIME_WINDOW:
+        request_times.popleft()
+    if len(request_times) < RATE_LIMIT:
+        request_times.append(current_time)
+        return True
+    return False
 
 
 def get_context_retriever_chain(vector_store):
@@ -96,9 +113,12 @@ else:
         # user input
     user_query = st.chat_input("Type your message here...")
     if user_query is not None and user_query != "":
-        response = get_response(user_query)
-        st.session_state.chat_history.append(HumanMessage(content=user_query))
-        st.session_state.chat_history.append(AIMessage(content=response))
+        if check_rate_limit():
+            response = get_response(user_query)
+            st.session_state.chat_history.append(HumanMessage(content=user_query))
+            st.session_state.chat_history.append(AIMessage(content=response))
+        else:
+            st.error("Rate limit exceeded. Please try again later.")
 
     # conversation
     for message in st.session_state.chat_history:
